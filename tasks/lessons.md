@@ -178,7 +178,63 @@ SUM(CASE WHEN chps.flg_blind_def_opp AND chps.flg_p_3bet THEN 1 ELSE 0 END)
 **Why:** "3-Bet Caller" postflop stat must filter to only those who actually called: `enum_p_3bet_action = 'C'`.
 **How to apply:** Postflop stats filtered by preflop action must always specify the preflop action taken, not just the opportunity.
 
-### BUG PATTERN: Inconsistent texture classification between modules
-**Issue:** pt4_tools.py returned DRY; generate_full_report.py returned RAINBOW/TWO-TONE.
-**Why:** Two separate implementations diverged. pt4_tools.py was the older version.
-**How to apply:** Single source of truth for texture classification. If both files need it, one should import from the other. Until refactored, keep both in sync manually.
+---
+
+## Round 2 Audit Fixes (2026-05-17)
+
+### BUG PATTERN: Targeting wrong player in sit_48
+**Issue:** `flg_f_cbet_opp=TRUE` targets the PFR. PFR cannot donk. Always returned 0.
+**Why:** Donk bettor is the OOP non-PFR. Correct denominator: `flg_f_donk_opp=TRUE AND flg_f_cbet_def_opp=FALSE`.
+**How to apply:** For any donk stat, denominator must be from the non-PFR perspective.
+
+### BUG PATTERN: Pre-filtering outcomes in WHERE (sit_74)
+**Issue:** Turn outcome conditions (`flg_t_fold=FALSE, flg_t_check_raise=FALSE`) were in WHERE, making t_folds/t_xr always 0.
+**Why:** Entry filter (flop call) belongs in WHERE. Turn outcomes belong only in SELECT CASE expressions.
+**How to apply:** Never put the outcome you're measuring in the WHERE clause. WHERE = entry condition only.
+
+### BUG PATTERN: Using defender flag for aggressor (sit_75, sit_76)
+**Issue:** `flg_t_cbet_def_opp=TRUE` used for checkdown detection after donk/XR. Aggressor is never a cbet defender — always 0.
+**Why:** After donking or check-raising, the player is the aggressor on the next street. Use `flg_t_saw=TRUE` for "reached turn" detection.
+**How to apply:** After any aggressive action (donk, XR), the player is the aggressor. Never use `_def_opp` flags for them.
+
+### BUG PATTERN: IP in OOP-only stat denominator (sit_82)
+**Issue:** No `flg_f_has_position=FALSE` filter — IP hands inflated denominator, suppressed XR%.
+**Why:** IP cannot check-raise (CLAUDE.md permanent rule). IP hands contribute 0 to numerator but inflate denominator.
+**How to apply:** Any check-raise stat MUST filter `flg_f_has_position=FALSE`. Always.
+
+### BUG PATTERN: Unconfirmed column name (sit_38)
+**Issue:** `flg_p_first_raise` not confirmed in schema. sit_37 correctly uses `cnt_p_raise > 0`.
+**Why:** Schema discovery only confirmed specific columns. Unconfirmed columns silently fail or return wrong results.
+**How to apply:** Always use confirmed columns. For "player raised preflop" use `cnt_p_raise > 0`, not `flg_p_first_raise`.
+
+### BUG PATTERN: xr not scoped to denominator context (sit_53)
+**Issue:** `flg_f_check_raise=TRUE` without `flg_f_cbet_def_opp=TRUE` — XRs from float situations counted in xr but not in n → FCR > 100%.
+**How to apply:** Every FCR component (fold, call, raise) must be filtered by the same denominator condition.
+
+### BUG PATTERN: IP raise flag wrong for IP (sit_54)
+**Issue:** `flg_f_check_raise` always 0 for IP. IP raises of cbet silently counted as calls.
+**Why:** IP raises a cbet directly (not check-raise). Use `cnt_f_raise > 0` for IP raise detection.
+**How to apply:** For IP postflop raise detection: `cnt_f_raise > 0`. For OOP: `flg_f_check_raise = TRUE`.
+
+### BUG PATTERN: No turn filter for "turn action" stat (sit_67)
+**Issue:** Hands where PFR folded to XR (no turn played) fell into t_chk_call bucket.
+**How to apply:** Any stat measuring turn actions must include `flg_t_saw=TRUE` in WHERE.
+
+### BUG PATTERN: Missing SRP filter in texture stat (sit_80)
+**Issue:** 3BP folds (~55%) mixed with SRP folds (~38%) — every texture bucket distorted.
+**How to apply:** Texture-based fold stats should always specify pot type. Default: add `flg_p_3bet=FALSE` for SRP analysis.
+
+### BUG PATTERN: Wrong street position flag (sit_93)
+**Issue:** `flg_f_has_position` (flop) used for river IP/OOP split. `flg_r_has_position` exists and is correct.
+**How to apply:** Always use street-specific position flags: `flg_f_has_position`, `flg_t_has_position`, `flg_r_has_position`.
+
+### SUSPICIOUS RESOLVED: sit_107 improvements
+- `n: 0` hardcoded → now returns n of highest-scoring leak
+- BTN Fold to 3-Bet added (most common 3-bet-facing position)
+- Donk threshold: 20% → 15% (GTO donk frequency is 0-15%)
+- sit_69 Large MDF: 50% → 43% (correct midpoint for 67-100% bet range)
+
+### SUSPICIOUS RESOLVED: DB config split
+- `generate_full_report.py` was hardcoding credentials while `pt4_tools.py` read `.env`
+- Fixed: both now read `.env` with same fallback logic
+- **How to apply:** Single source of truth for DB credentials. Always read from `.env`.
