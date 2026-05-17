@@ -1412,25 +1412,21 @@ def sit_83(cur, player):
 
 
 def sit_84(cur, player):
-    """Float by Texture (called cbet IP — float bet definition).
-    Denominator: called flop cbet IP AND saw turn (flg_f_cbet_def_opp=TRUE, flg_f_fold=FALSE,
-                 flg_f_has_position=TRUE, flg_t_saw=TRUE).
-    Numerator: flg_t_bet = TRUE (bet on TURN = float bet on next street).
-    Note: flg_f_bet was wrong — that's a flop bet, impossible after calling a flop cbet.
+    """Float by Texture — uses PT4's dedicated turn float flags (confirmed in schema).
+    Denominator: flg_t_float_opp = TRUE (PT4: called flop cbet IP, PFR has turn cbet opportunity).
+    Numerator: flg_t_float = TRUE (PT4: IP non-PFR bets turn after PFR checks).
+    This is more precise than flg_t_bet which captures ALL turn bets, not just floats.
     """
     cur.execute("""
         SELECT
             chs.card_1, chs.card_2, chs.card_3,
             COUNT(*) as n,
-            SUM(CASE WHEN chps.flg_t_bet = TRUE THEN 1 ELSE 0 END) as floats
+            SUM(CASE WHEN chps.flg_t_float = TRUE THEN 1 ELSE 0 END) as floats
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
         JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
         WHERE p.player_name = %s
-          AND chps.flg_f_cbet_def_opp = TRUE
-          AND chps.flg_f_fold = FALSE
-          AND chps.flg_f_has_position = TRUE
-          AND chps.flg_t_saw = TRUE
+          AND chps.flg_t_float_opp = TRUE
         GROUP BY chs.card_1, chs.card_2, chs.card_3
         HAVING COUNT(*) >= 10
     """, (player,))
@@ -1667,9 +1663,11 @@ def sit_93(cur, player):
 
 def sit_94(cur, player):
     """
-    Float Bet %: IP non-PFR who bets when PFR checks flop.
-    Filter: flg_f_has_position = TRUE (IP) AND flg_f_cbet_opp = FALSE (not PFR).
-    Float bet: flg_f_bet = TRUE (IP bets after PFR checks).
+    Flop Float Bet %: IP non-PFR who bets flop when PFR checks (flop steal/float).
+    Note: this is a FLOP float — PT4's flg_t_float covers TURN floats only.
+    No dedicated PT4 flag exists for flop floats; flg_f_bet is the correct proxy.
+    Denominator: IP non-PFR who saw flop (flg_f_has_position=TRUE, flg_f_cbet_opp=FALSE, flg_f_saw=TRUE).
+    Numerator: flg_f_bet = TRUE (IP bets flop after PFR checks).
     Split by seat position. n >= 15.
     """
     cur.execute("""
