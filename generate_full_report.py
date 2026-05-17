@@ -1706,28 +1706,29 @@ def sit_94(cur, player):
 def sit_96(cur, player):
     """
     BB vs BTN Heads-Up Postflop Profile (SRP).
-    Both BB (position=8) and BTN (position=0) stats in HU (cnt_players_f=2).
-    Metrics: CBet%, Fold%, Check-Raise%, Donk%.
+    HU (cnt_players_f=2), SRP (flg_p_3bet=FALSE).
+    BB (OOP defender): Fold to CBet%, XR%, Donk% — denominator is flg_f_cbet_def_opp for fold/XR,
+                       flg_f_donk_opp for donk. BB as PFR in SRP is rare, so cbet_opp is excluded.
+    BTN (IP aggressor): CBet% — denominator is flg_f_cbet_opp.
     """
-    # As BB (OOP)
+    # BB as OOP defender
     cur.execute("""
         SELECT
-            COUNT(*) as opp,
-            SUM(CASE WHEN chps.flg_f_cbet = TRUE THEN 1 ELSE 0 END) as cbet,
-            SUM(CASE WHEN chps.flg_f_fold = TRUE THEN 1 ELSE 0 END) as fold,
-            SUM(CASE WHEN chps.flg_f_check_raise = TRUE THEN 1 ELSE 0 END) as xr,
+            SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE THEN 1 ELSE 0 END) as cbet_def_opp,
+            SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_fold = TRUE THEN 1 ELSE 0 END) as fold,
+            SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_check_raise = TRUE THEN 1 ELSE 0 END) as xr,
+            SUM(CASE WHEN chps.flg_f_donk_opp = TRUE THEN 1 ELSE 0 END) as donk_opp,
             SUM(CASE WHEN chps.flg_f_donk = TRUE THEN 1 ELSE 0 END) as donk
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
         JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
         WHERE p.player_name = %s
-          AND chps.position = 8  -- BB
-          AND chs.cnt_players_f = 2  -- HU
-          AND chps.flg_p_3bet = FALSE  -- SRP
-          AND chps.flg_f_cbet_opp = TRUE
+          AND chps.position = 8
+          AND chs.cnt_players_f = 2
+          AND chps.flg_p_3bet = FALSE
     """, (player,))
     bb_row = cur.fetchone()
-    # As BTN (IP)
+    # BTN as IP aggressor
     cur.execute("""
         SELECT
             COUNT(*) as opp,
@@ -1739,24 +1740,38 @@ def sit_96(cur, player):
         JOIN player p ON p.id_player = chps.id_player
         JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
         WHERE p.player_name = %s
-          AND chps.position = 0  -- BTN
-          AND chs.cnt_players_f = 2  -- HU
-          AND chps.flg_p_3bet = FALSE  -- SRP
+          AND chps.position = 0
+          AND chs.cnt_players_f = 2
+          AND chps.flg_p_3bet = FALSE
           AND chps.flg_f_cbet_opp = TRUE
     """, (player,))
     btn_row = cur.fetchone()
 
     details = {}
-    for label, row in [('BB (OOP)', bb_row), ('BTN (IP)', btn_row)]:
-        if row is None:
-            continue
-        n = row[0] or 0
-        cbet = row[1] or 0
-        fold = row[2] or 0
-        xr = row[3] or 0
-        donk = row[4] or 0
+    # BB: fold/XR use cbet_def_opp denominator, donk uses donk_opp denominator
+    if bb_row is not None:
+        cbet_def_opp = bb_row[0] or 0
+        fold = bb_row[1] or 0
+        xr = bb_row[2] or 0
+        donk_opp = bb_row[3] or 0
+        donk = bb_row[4] or 0
+        if cbet_def_opp > 0 or donk_opp > 0:
+            details['BB (OOP)'] = {
+                'Fold to CBet%': round(fold / cbet_def_opp * 100.0, 1) if cbet_def_opp > 0 else None,
+                'XR%': round(xr / cbet_def_opp * 100.0, 1) if cbet_def_opp > 0 else None,
+                'Donk%': round(donk / donk_opp * 100.0, 1) if donk_opp > 0 else None,
+                'n_cbet_def': cbet_def_opp,
+                'n_donk_opp': donk_opp
+            }
+    # BTN: all metrics use cbet_opp denominator
+    if btn_row is not None:
+        n = btn_row[0] or 0
+        cbet = btn_row[1] or 0
+        fold = btn_row[2] or 0
+        xr = btn_row[3] or 0
+        donk = btn_row[4] or 0
         if n > 0:
-            details[label] = {
+            details['BTN (IP)'] = {
                 'CBet%': round(cbet / n * 100.0, 1),
                 'Fold%': round(fold / n * 100.0, 1),
                 'XR%': round(xr / n * 100.0, 1),
@@ -1764,7 +1779,9 @@ def sit_96(cur, player):
                 'n': n
             }
 
-    total_n = (bb_row[0] or 0) + (btn_row[0] or 0)
+    bb_n = (bb_row[0] or 0) if bb_row else 0  # cbet_def_opp for BB
+    btn_n = (btn_row[0] or 0) if btn_row else 0  # cbet_opp for BTN
+    total_n = bb_n + btn_n
     status = sample_status(total_n, 30)
     return {'value': None, 'n': total_n, 'status': status, 'details': details}
 
