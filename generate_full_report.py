@@ -23,12 +23,27 @@ from datetime import datetime
 #    Constants                                                                 
 
 DB = dict(
-    host='localhost',
-    port='5432',
-    database='PT4 DB',
-    user='postgres',
-    password='postgrespass'
+    host=os.environ.get('DB_HOST', 'localhost'),
+    port=os.environ.get('DB_PORT', '5432'),
+    database=os.environ.get('DB_NAME', 'PT4 DB'),
+    user=os.environ.get('DB_USER', 'postgres'),
+    password=os.environ.get('DB_PASS', 'postgrespass')
 )
+
+# Load .env file if present (same logic as pt4_tools.py to avoid credential split)
+_env_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(_env_path):
+    with open(_env_path, 'r') as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and '=' in _line and not _line.startswith('#'):
+                _k, _v = _line.split('=', 1)
+                _v = _v.strip('"\'')
+                if _k == 'DB_NAME':    DB['database'] = _v
+                elif _k == 'DB_USER':  DB['user'] = _v
+                elif _k == 'DB_PASS':  DB['password'] = _v
+                elif _k == 'DB_HOST':  DB['host'] = _v
+                elif _k == 'DB_PORT':  DB['port'] = _v
 
 REPORT_DIR = os.path.join(os.path.dirname(__file__), 'reports')
 
@@ -323,15 +338,17 @@ def sit_37(cur, player):
 
 def sit_38(cur, player):
     """
-    Cold Call % = (flg_vpip AND NOT flg_p_first_raise AND NOT flg_p_3bet AND NOT flg_p_squeeze) / all hands.
+    Cold Call % = (flg_vpip AND cnt_p_raise=0 AND NOT flg_p_3bet AND NOT flg_p_squeeze) / all hands.
     Derived formula — no dedicated flag.
+    Note: flg_p_first_raise is NOT used — it is not confirmed in the PT4 schema.
+    cnt_p_raise = 0 is the correct way to exclude raisers (consistent with sit_37 PFR logic).
     """
     cur.execute("""
         SELECT
             COUNT(*) as total,
             SUM(CASE WHEN
                 chps.flg_vpip = TRUE
-                AND chps.flg_p_first_raise = FALSE
+                AND chps.cnt_p_raise = 0
                 AND chps.flg_p_3bet = FALSE
                 AND chps.flg_p_squeeze = FALSE
             THEN 1 ELSE 0 END) as cold_call
@@ -767,6 +784,7 @@ def sit_53(cur, player):
     Numerator: flg_f_fold = TRUE.
     OOP: flg_f_has_position = FALSE.
     Filter: enum_p_3bet_action = 'C' ensures only callers (not folders) are included.
+    xr filtered by flg_f_cbet_def_opp=TRUE to avoid counting XRs from non-cbet situations.
     Verified jaymacca13: SB=34.5%, MP=53.3%, EP=44.0%, CO=45.0%.
     """
     cur.execute("""
@@ -774,7 +792,7 @@ def sit_53(cur, player):
     SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_fold = TRUE THEN 1 ELSE 0 END) as folds,
     SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE THEN 1 ELSE 0 END) as opp,
     SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_fold = FALSE AND chps.flg_f_check_raise = FALSE AND chps.flg_f_bet = FALSE THEN 1 ELSE 0 END) as calls,
-    SUM(CASE WHEN chps.flg_f_check_raise = TRUE THEN 1 ELSE 0 END) as xr
+    SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_check_raise = TRUE THEN 1 ELSE 0 END) as xr
     FROM cash_hand_player_statistics chps
     JOIN player p ON p.id_player = chps.id_player
     WHERE p.player_name = %s
@@ -806,13 +824,16 @@ def sit_54(cur, player):
     Numerator: flg_f_fold = TRUE.
     IP: flg_f_has_position = TRUE.
     Filter: enum_p_3bet_action = 'C' ensures only callers (not folders) are included.
+    Note: IP players cannot check-raise (CLAUDE.md permanent rule). xr uses cnt_f_raise > 0
+    to capture IP raises of a cbet (which are NOT check-raises but direct raises).
+    calls excludes cnt_f_raise > 0 to avoid counting IP raises as calls.
     """
     cur.execute("""
     SELECT
     SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_fold = TRUE THEN 1 ELSE 0 END) as folds,
     SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE THEN 1 ELSE 0 END) as opp,
-    SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_fold = FALSE AND chps.flg_f_check_raise = FALSE AND chps.flg_f_bet = FALSE THEN 1 ELSE 0 END) as calls,
-    SUM(CASE WHEN chps.flg_f_check_raise = TRUE THEN 1 ELSE 0 END) as xr
+    SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.flg_f_fold = FALSE AND chps.cnt_f_raise = 0 AND chps.flg_f_bet = FALSE THEN 1 ELSE 0 END) as calls,
+    SUM(CASE WHEN chps.flg_f_cbet_def_opp = TRUE AND chps.cnt_f_raise > 0 THEN 1 ELSE 0 END) as xr
     FROM cash_hand_player_statistics chps
     JOIN player p ON p.id_player = chps.id_player
     WHERE p.player_name = %s
@@ -1050,10 +1071,11 @@ def sit_73(cur, player):
 
 def sit_74(cur, player):
     """
-    Check-Call Flop -> Turn: what does player do on turn after check-calling flop?
-    Entry: called cbet OOP (flg_f_cbet_def_opp=TRUE, flg_f_fold=FALSE, flg_f_check_raise=FALSE).
-    Then: check-called turn (flg_t_cbet_def_opp=TRUE, flg_t_fold=FALSE, flg_t_check_raise=FALSE).
-    Turn actions: Fold / Check-Down / Bet / Call-Bet.
+    Check-Call Flop -> Turn: what does player do on turn after check-calling flop cbet?
+    Entry filter (flop call): flg_f_cbet_def_opp=TRUE AND flg_f_fold=FALSE AND flg_f_check_raise=FALSE.
+    Turn actions measured: Fold / Bet / Check-Raise / Check-Down (saw turn, no action).
+    Note: turn conditions removed from WHERE — they were pre-filtering outcomes, making
+    t_folds and t_xr always 0. Now all turn outcomes are captured correctly.
     """
     cur.execute("""
         SELECT
@@ -1061,10 +1083,10 @@ def sit_74(cur, player):
             SUM(CASE WHEN chps.flg_t_fold = TRUE THEN 1 ELSE 0 END) as t_folds,
             SUM(CASE WHEN chps.flg_t_check_raise = TRUE THEN 1 ELSE 0 END) as t_xr,
             SUM(CASE WHEN chps.flg_t_bet = TRUE THEN 1 ELSE 0 END) as t_bets,
-            SUM(CASE WHEN chps.flg_t_cbet_def_opp = TRUE
+            SUM(CASE WHEN chps.flg_t_saw = TRUE
                       AND chps.flg_t_fold = FALSE
-                      AND chps.flg_t_check_raise = FALSE
                       AND chps.flg_t_bet = FALSE
+                      AND chps.flg_t_check_raise = FALSE
                  THEN 1 ELSE 0 END) as t_checkdowns
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
@@ -1072,9 +1094,6 @@ def sit_74(cur, player):
           AND chps.flg_f_cbet_def_opp = TRUE
           AND chps.flg_f_fold = FALSE
           AND chps.flg_f_check_raise = FALSE
-          AND chps.flg_t_cbet_def_opp = TRUE
-          AND chps.flg_t_fold = FALSE
-          AND chps.flg_t_check_raise = FALSE
     """, (player,))
     row = cur.fetchone()
     n = row[0] or 0
@@ -1096,7 +1115,9 @@ def sit_75(cur, player):
     """
     Donk Bet Multi-Street: player led flop, what happened on turn?
     Filter: flg_f_donk = TRUE (led flop as preflop caller).
-    Turn outcomes: Fold / Check-Down / Bet / Call.
+    Turn outcomes: Fold / Bet / Check-Raise / Check-Down.
+    Note: t_checkdowns uses flg_t_saw (not flg_t_cbet_def_opp) because after donking
+    the player is the aggressor, not the defender — flg_t_cbet_def_opp would always be FALSE.
     """
     cur.execute("""
         SELECT
@@ -1104,7 +1125,7 @@ def sit_75(cur, player):
             SUM(CASE WHEN chps.flg_t_fold = TRUE THEN 1 ELSE 0 END) as t_folds,
             SUM(CASE WHEN chps.flg_t_bet = TRUE THEN 1 ELSE 0 END) as t_bets,
             SUM(CASE WHEN chps.flg_t_check_raise = TRUE THEN 1 ELSE 0 END) as t_xr,
-            SUM(CASE WHEN chps.flg_t_cbet_def_opp = TRUE
+            SUM(CASE WHEN chps.flg_t_saw = TRUE
                       AND chps.flg_t_fold = FALSE
                       AND chps.flg_t_bet = FALSE
                       AND chps.flg_t_check_raise = FALSE
@@ -1133,7 +1154,9 @@ def sit_76(cur, player):
     """
     Raise CBet -> Turn: player check-raised flop, what happened turn?
     Filter: flg_f_check_raise = TRUE.
-    Turn actions: Fold / Bet / Check-Down / Call.
+    Turn actions: Fold / Bet / Check-Raise / Check-Down.
+    Note: t_checkdowns uses flg_t_saw (not flg_t_cbet_def_opp) because after XR
+    the player is the aggressor, not the defender — flg_t_cbet_def_opp would always be FALSE.
     """
     cur.execute("""
         SELECT
@@ -1141,7 +1164,7 @@ def sit_76(cur, player):
             SUM(CASE WHEN chps.flg_t_fold = TRUE THEN 1 ELSE 0 END) as t_folds,
             SUM(CASE WHEN chps.flg_t_bet = TRUE THEN 1 ELSE 0 END) as t_bets,
             SUM(CASE WHEN chps.flg_t_check_raise = TRUE THEN 1 ELSE 0 END) as t_xr,
-            SUM(CASE WHEN chps.flg_t_cbet_def_opp = TRUE
+            SUM(CASE WHEN chps.flg_t_saw = TRUE
                       AND chps.flg_t_fold = FALSE
                       AND chps.flg_t_bet = FALSE
                       AND chps.flg_t_check_raise = FALSE
@@ -1150,6 +1173,7 @@ def sit_76(cur, player):
         JOIN player p ON p.id_player = chps.id_player
         WHERE p.player_name = %s
           AND chps.flg_f_check_raise = TRUE
+          AND chps.flg_t_saw = TRUE
     """, (player,))
     row = cur.fetchone()
     n = row[0] or 0
@@ -1168,9 +1192,11 @@ def sit_76(cur, player):
 
 def sit_77(cur, player):
     """
-    Float then Raise Turn: called cbet flop, then raised turn.
-    Filter: flg_f_cbet_def_opp=TRUE, flg_f_fold=FALSE (called cbet).
-    Then: raised turn (cnt_t_raise > 0 OR flg_t_check_raise=TRUE).
+    Raise vs Turn Double-Barrel: called flop cbet, then raised when PFR double-barreled turn.
+    Filter: flg_f_cbet_def_opp=TRUE, flg_f_fold=FALSE (called flop cbet).
+    Then: faced turn cbet (flg_t_cbet_def_opp=TRUE) and raised (cnt_t_raise > 0).
+    Note: this is NOT a float raise (which requires PFR to check turn). This measures
+    raise frequency when facing a double-barrel. Renamed from 'Float then Raise Turn'.
     """
     cur.execute("""
         SELECT
@@ -1196,9 +1222,11 @@ def sit_77(cur, player):
 
 def sit_78(cur, player):
     """
-    WTSD % by street: went to showdown / saw that street.
-    Filter: flg_f_cbet_def_opp = TRUE (saw flop as defender).
+    WTSD % as CBet Defender (flop).
+    Filter: flg_f_cbet_def_opp = TRUE (saw flop as cbet defender).
     WTSD = flg_showdown = TRUE / COUNT(*).
+    Note: renamed from 'WTSD by Street' — there is no per-street breakdown here.
+    This measures overall showdown frequency for players who faced a flop cbet.
     """
     cur.execute("""
         SELECT
@@ -1261,10 +1289,13 @@ def _texture_agg(cur, player, filter_sql, num_col, num_alias):
 
 
 def sit_80(cur, player):
-    """Fold to CBet by Texture (SRP, OOP faced cbet)."""
+    """Fold to CBet by Texture (SRP only, OOP faced cbet).
+    SRP filter added to exclude 3-bet pots which have significantly higher fold frequencies
+    (~50-60%) vs SRP (~35-45%), distorting every texture bucket.
+    """
     details = _texture_agg(
         cur, player,
-        filter_sql="chps.flg_f_cbet_def_opp = TRUE",
+        filter_sql="chps.flg_f_cbet_def_opp = TRUE AND chps.flg_p_3bet = FALSE",
         num_col="chps.flg_f_fold",
         num_alias="folds"
     )
@@ -1293,10 +1324,12 @@ def sit_81(cur, player):
 
 
 def sit_82(cur, player):
-    """Check-Raise by Texture (SRP, OOP).
-    Denominator: flg_f_cbet_def_opp = TRUE (faced cbet as defender, OOP).
+    """Check-Raise by Texture (SRP, OOP only).
+    Denominator: flg_f_cbet_def_opp = TRUE AND flg_f_has_position = FALSE (OOP defender).
     Numerator: flg_f_check_raise = TRUE.
-    This fixes the tautology where filter = numerator (100% by definition).
+    OOP filter is required: IP players cannot check-raise (CLAUDE.md permanent rule).
+    Without it, IP hands inflate the denominator while never contributing to numerator,
+    artificially suppressing the reported XR%.
     """
     cur.execute("""
         SELECT
@@ -1309,6 +1342,7 @@ def sit_82(cur, player):
         WHERE p.player_name = %s
           AND chps.flg_f_cbet_def_opp = TRUE
           AND chps.flg_p_3bet = FALSE
+          AND chps.flg_f_has_position = FALSE
         GROUP BY chs.card_1, chs.card_2, chs.card_3
         HAVING COUNT(*) >= 10
     """, (player,))
@@ -1584,12 +1618,12 @@ def sit_93(cur, player):
     Filter: flg_r_cbet_def_opp = TRUE (faced river cbet).
     Fold% = flg_r_fold / flg_r_cbet_def_opp.
     Call% and Raise% derived.
-    Split by IP/OOP (flg_f_has_position used as proxy; no river-specific flag).
+    Split by IP/OOP using flg_r_has_position (river-specific flag, consistent with sit_46/57).
     n >= 15.
     """
     cur.execute("""
         SELECT
-            CASE WHEN chps.flg_f_has_position = TRUE THEN 'IP' ELSE 'OOP' END as pos_type,
+            CASE WHEN chps.flg_r_has_position = TRUE THEN 'IP' ELSE 'OOP' END as pos_type,
             COUNT(*) as n,
             SUM(CASE WHEN chps.flg_r_fold = TRUE THEN 1 ELSE 0 END) as folds,
             SUM(CASE WHEN chps.flg_r_check_raise = TRUE THEN 1 ELSE 0 END) as raises
@@ -1597,8 +1631,8 @@ def sit_93(cur, player):
         JOIN player p ON p.id_player = chps.id_player
         WHERE p.player_name = %s
           AND chps.flg_r_cbet_def_opp = TRUE
-        GROUP BY chps.flg_f_has_position
-        ORDER BY chps.flg_f_has_position DESC
+        GROUP BY chps.flg_r_has_position
+        ORDER BY chps.flg_r_has_position DESC
     """, (player,))
     rows = cur.fetchall()
     details = {}
@@ -2062,6 +2096,10 @@ def sit_107(cur, player):
     # GTO thresholds and metadata: (description, numerator_filter, denominator_filter, GTO_threshold, freq_mult)
     # Excludes BB Fold to Steal (sit_40 BB-vs-BTN/CO/SB) -- under-folding is a different issue.
     leak_defs = [
+        ('Fold to 3-Bet - BTN',
+         'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 0 AND chps.enum_p_3bet_action = \'F\'',
+         'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 0',
+         55.0, 1.2),
         ('Fold to 3-Bet - SB',
          'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 9 AND chps.enum_p_3bet_action = \'F\'',
          'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 9',
@@ -2093,7 +2131,7 @@ def sit_107(cur, player):
         ('Donk Lead Flop',
          'chps.flg_f_donk = TRUE',
          'chps.flg_f_donk_opp = TRUE',
-         20.0, 1.0),
+         15.0, 1.0),
     ]
 
     scored = []
@@ -2143,7 +2181,8 @@ def sit_107(cur, player):
         details['#%d' % (i + 1)] = {'desc': desc, 'dev': dev, 'n': int(n),
                                     'mult': mult, 'log10_n': vf, 'score': score}
 
-    return {'value': scored[0][5] if scored else None, 'n': 0,
+    return {'value': scored[0][5] if scored else None,
+            'n': scored[0][2] if scored else 0,
             'status': 'LIVE_SQL', 'details': details}
 def sit_108(cur, player):
     """
@@ -2703,9 +2742,11 @@ def sit_85(cur, player):
 def sit_48(cur, player):
     """
     Donk bet after PFR checks flop, OOP only.
-    Filter: flg_f_cbet_opp = TRUE AND flg_f_cbet = FALSE (PFR checked) AND flg_f_has_position = FALSE.
-    Donk% = flg_f_donk / total OOP hands where PFR checked.
+    Denominator: flg_f_donk_opp = TRUE AND flg_f_cbet_def_opp = FALSE
+                 (OOP non-PFR with donk opportunity, AND PFR checked — no cbet was faced).
+    Numerator: flg_f_donk = TRUE.
     Split by Seat position x Board Texture. n >= 15.
+    Note: previous version used flg_f_cbet_opp=TRUE (PFR filter) which is the wrong player.
     """
     cur.execute("""
         SELECT
@@ -2717,9 +2758,8 @@ def sit_48(cur, player):
         JOIN player p ON p.id_player = chps.id_player
         JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
         WHERE p.player_name = %s
-          AND chps.flg_f_cbet_opp = TRUE
-          AND chps.flg_f_cbet = FALSE
-          AND chps.flg_f_has_position = FALSE
+          AND chps.flg_f_donk_opp = TRUE
+          AND chps.flg_f_cbet_def_opp = FALSE
         GROUP BY chps.position, chs.card_1, chs.card_2, chs.card_3
     """, (player,))
     raw = cur.fetchall()
@@ -2894,9 +2934,11 @@ def sit_65(cur, player):
 def sit_67(cur, player):
     """
     Turn action after flop check-raise OOP.
-    Filter: flg_f_check_raise = TRUE (check-raised flop OOP).
+    Filter: flg_f_check_raise = TRUE AND flg_t_saw = TRUE (reached the turn).
     Turn: Bet% (flg_t_bet), Check-Fold% (flg_t_fold AND NOT flg_t_bet),
     Check-Call% derived: total - bet - fold.
+    Note: flg_t_saw=TRUE added to exclude hands where PFR folded to XR (no turn played).
+    Without this filter, those hands inflate the Check-Call bucket.
     Validate sum ≈ 100%. n >= 15.
     """
     cur.execute("""
@@ -2910,6 +2952,7 @@ def sit_67(cur, player):
         JOIN player p ON p.id_player = chps.id_player
         WHERE p.player_name = %s
           AND chps.flg_f_check_raise = TRUE
+          AND chps.flg_t_saw = TRUE
     """, (player,))
     row = cur.fetchone()
     total, t_bet, t_chk_fold, t_chk_call = row
@@ -3018,7 +3061,9 @@ def sit_69(cur, player):
         ORDER BY bucket
     """, (player,))
     rows = cur.fetchall()
-    max_fold_map = {'Small': 25.0, 'Medium': 33.0, 'Large': 50.0}
+    max_fold_map = {'Small': 25.0, 'Medium': 33.0, 'Large': 43.0}
+    # Large bucket covers 67-100% bets. At 67% pot MDF max-fold ~40%, at 100% ~50%.
+    # 43% is a conservative midpoint — avoids flagging correct calls vs 90-100% bets.
     details = {}
     total_n = 0
     total_folds = 0

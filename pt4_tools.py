@@ -177,8 +177,10 @@ def generate_exploit_suggestion(texture: str, sizing: str, fold_pct: float) -> s
             return f"Exploit: High fold rate ({fold_pct:.1f}%) vs small bets on monotone boards. Stab 1/3 pot with pure air, leverage scare cards."
         elif texture == 'PAIRED':
             return f"Exploit: Excessive folding ({fold_pct:.1f}%) to small bets on paired boards. Fire 1/3 pot with any equity."
-        elif texture == 'DRY':
-            return f"Exploit: Folding {fold_pct:.1f}% to small bets on dry boards. Wide folding range - stab with nearly any two cards."
+        elif texture == 'RAINBOW':
+            return f"Exploit: Folding {fold_pct:.1f}% to small bets on rainbow boards. Wide folding range - stab with nearly any two cards."
+        elif texture == 'TWO-TONE':
+            return f"Exploit: Folding {fold_pct:.1f}% to small bets on two-tone boards. Stab with backdoor draws and air."
         else:
             return f"Exploit: {fold_pct:.1f}% fold rate to small bets. Aggressive small-ball strategy with range advantage."
 
@@ -188,8 +190,10 @@ def generate_exploit_suggestion(texture: str, sizing: str, fold_pct: float) -> s
             return f"Exploit: {fold_pct:.1f}% fold rate to medium bets on monotone boards. Polarize with flush draws and semi-bluffs."
         elif texture == 'PAIRED':
             return f"Exploit: Folding {fold_pct:.1f}% to medium bets on paired boards. Target weak pairs with controlled aggression."
-        elif texture == 'DRY':
-            return f"Exploit: {fold_pct:.1f}% fold rate to medium bets on dry boards. Continued aggression exploits."
+        elif texture == 'RAINBOW':
+            return f"Exploit: {fold_pct:.1f}% fold rate to medium bets on rainbow boards. Continued aggression exploits."
+        elif texture == 'TWO-TONE':
+            return f"Exploit: {fold_pct:.1f}% fold rate to medium bets on two-tone boards. Pressure with flush draw equity."
         else:
             return f"Exploit: {fold_pct:.1f}% fold rate to medium bets. Standard sizing - exploit with balanced pressure."
 
@@ -199,8 +203,10 @@ def generate_exploit_suggestion(texture: str, sizing: str, fold_pct: float) -> s
             return f"Exploit: SEVERE LEAK ({fold_pct:.1f}% fold rate) vs large bets on monotone boards. GTO calls widely here."
         elif texture == 'PAIRED':
             return f"Exploit: CRITICAL LEAK ({fold_pct:.1f}% fold rate) vs large bets on paired boards. Marathon call-down mode."
-        elif texture == 'DRY':
-            return f"Exploit: {fold_pct:.1f}% fold rate to large bets on dry boards. Opponent likely under-defending."
+        elif texture == 'RAINBOW':
+            return f"Exploit: {fold_pct:.1f}% fold rate to large bets on rainbow boards. Opponent likely under-defending."
+        elif texture == 'TWO-TONE':
+            return f"Exploit: {fold_pct:.1f}% fold rate to large bets on two-tone boards. Heavy pressure causing folds."
         else:
             return f"Exploit: {fold_pct:.1f}% fold rate to large bets. Heavy pressure causing folds."
 
