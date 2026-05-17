@@ -1188,7 +1188,7 @@ def sit_76(cur, player):
                         't_xr': t_xr, 't_checkdowns': t_checkdowns}}
 
 
-#    #77 Float then Raise Turn                                                
+#    #77 Raise vs Turn Double-Barrel
 
 def sit_77(cur, player):
     """
