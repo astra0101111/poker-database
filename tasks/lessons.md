@@ -234,7 +234,16 @@ SUM(CASE WHEN chps.flg_blind_def_opp AND chps.flg_p_3bet THEN 1 ELSE 0 END)
 - Donk threshold: 20% → 15% (GTO donk frequency is 0-15%)
 - sit_69 Large MDF: 50% → 43% (correct midpoint for 67-100% bet range)
 
-### SUSPICIOUS RESOLVED: DB config split
-- `generate_full_report.py` was hardcoding credentials while `pt4_tools.py` read `.env`
-- Fixed: both now read `.env` with same fallback logic
-- **How to apply:** Single source of truth for DB credentials. Always read from `.env`.
+### SCHEMA VERIFICATION (2026-05-17) — All columns confirmed
+Direct query against information_schema.columns confirmed ALL previously unverified columns exist:
+- flg_p_squeeze_def_opp, enum_p_squeeze_action → sit_29 OK
+- flg_p_4bet_def_opp, enum_p_4bet_action → sit_31 OK
+- flg_p_first_raise → EXISTS (sit_38 fix to cnt_p_raise=0 still preferred for consistency with sit_37)
+- flg_t_float, flg_t_float_opp → sit_84 now uses native PT4 float flags
+- flg_r_has_position, flg_t_has_position → sit_93 fix confirmed correct
+- cnt_f_raise, cnt_t_raise, cnt_r_raise → sit_54 fix confirmed correct
+- flg_p_ccall → sit_99 OK
+- amt_f_effective_stack → sit_100 OK
+
+**Lesson:** Schema discovery in Phase 0 was incomplete. Always verify suspicious columns directly
+via `information_schema.columns` before assuming they don't exist.
