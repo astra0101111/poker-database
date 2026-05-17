@@ -1516,8 +1516,9 @@ def sit_87(cur, player):
 
 def sit_90(cur, player):
     """
-    Fold to CBet by board rank category AND texture.
+    Fold to CBet by board rank category AND texture (SRP only).
     4x4 = 16 buckets.
+    SRP filter added for consistency with sit_80 — 3BP folds (~55%) distort texture buckets.
     """
     cur.execute("""
         SELECT
@@ -1529,6 +1530,7 @@ def sit_90(cur, player):
         JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
         WHERE p.player_name = %s
           AND chps.flg_f_cbet_def_opp = TRUE
+          AND chps.flg_p_3bet = FALSE
         GROUP BY chs.card_1, chs.card_2, chs.card_3
         HAVING COUNT(*) >= 10
     """, (player,))
@@ -1734,7 +1736,7 @@ def sit_96(cur, player):
             COUNT(*) as opp,
             SUM(CASE WHEN chps.flg_f_cbet = TRUE THEN 1 ELSE 0 END) as cbet,
             SUM(CASE WHEN chps.flg_f_fold = TRUE THEN 1 ELSE 0 END) as fold,
-            SUM(CASE WHEN chps.flg_f_check_raise = TRUE THEN 1 ELSE 0 END) as xr,
+            SUM(CASE WHEN chps.cnt_f_raise > 0 THEN 1 ELSE 0 END) as xr,
             SUM(CASE WHEN chps.flg_f_donk = TRUE THEN 1 ELSE 0 END) as donk
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
@@ -1897,8 +1899,10 @@ def sit_100(cur, player):
 def sit_101(cur, player):
     """
     3-Bet IP vs OOP vs original raiser.
-    IP = player closer to BTN than original raiser.
-    Check str_aggressors_p to determine who raised first.
+    IP/OOP determined by flg_f_has_position (postflop position flag).
+    Note: hands where 3-bet ends action preflop (no flop) have flg_f_has_position=NULL
+    and are excluded. This stat reflects 3-bet behavior in hands that reached the flop only.
+    flg_f_has_position IS NOT NULL filter makes this exclusion explicit.
     """
     cur.execute("""
         SELECT
@@ -1912,6 +1916,7 @@ def sit_101(cur, player):
         JOIN player p ON p.id_player = chps.id_player
         WHERE p.player_name = %s
           AND chps.flg_p_3bet_opp = TRUE
+          AND chps.flg_f_has_position IS NOT NULL
         GROUP BY CASE
             WHEN chps.flg_f_has_position = TRUE THEN 'IP'
             ELSE 'OOP'
@@ -2561,7 +2566,8 @@ def sit_46(cur, player):
     """
     Response to river CBet: Fold/Call/Raise split by IP/OOP.
     Filter: flg_r_cbet_def_opp = TRUE (faced river cbet).
-    Fold% = flg_r_fold / total, Raise% = flg_r_check_raise / total.
+    Fold% = flg_r_fold / total.
+    Raise%: OOP uses flg_r_check_raise; IP uses cnt_r_raise > 0 (IP cannot check-raise).
     Call% = total - folds - raises.
     Validate: Fold + Call + Raise ≈ 100%. n >= 15.
     """
@@ -2570,7 +2576,10 @@ def sit_46(cur, player):
             CASE WHEN chps.flg_r_has_position = TRUE THEN 'IP' ELSE 'OOP' END as pos_type,
             COUNT(*) as total,
             SUM(CASE WHEN chps.flg_r_fold = TRUE THEN 1 ELSE 0 END) as folds,
-            SUM(CASE WHEN chps.flg_r_check_raise = TRUE THEN 1 ELSE 0 END) as raises
+            CASE WHEN chps.flg_r_has_position = TRUE
+                 THEN SUM(CASE WHEN chps.cnt_r_raise > 0 THEN 1 ELSE 0 END)
+                 ELSE SUM(CASE WHEN chps.flg_r_check_raise = TRUE THEN 1 ELSE 0 END)
+            END as raises
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
         WHERE p.player_name = %s
@@ -3185,7 +3194,7 @@ def sit_71(cur, player):
 def sit_32(cur, player):
     """
     River Check-Raise % by seat position (OOP only — IP cannot check-raise).
-    Filter: flg_r_saw = TRUE AND flg_f_has_position = FALSE.
+    Filter: flg_r_saw = TRUE AND flg_r_has_position = FALSE (river-specific OOP flag).
     XR% = flg_r_check_raise / total river hands OOP.
     Split by Seat position. n >= 15.
     """
@@ -3198,7 +3207,7 @@ def sit_32(cur, player):
         JOIN player p ON p.id_player = chps.id_player
         WHERE p.player_name = %s
           AND chps.flg_r_saw = TRUE
-          AND chps.flg_f_has_position = FALSE
+          AND chps.flg_r_has_position = FALSE
         GROUP BY chps.position
         ORDER BY chps.position
     """, (player,))
