@@ -766,6 +766,7 @@ def sit_53(cur, player):
     Denominator: flg_f_cbet_def_opp = TRUE (player FACED cbet as defender).
     Numerator: flg_f_fold = TRUE.
     OOP: flg_f_has_position = FALSE.
+    Filter: enum_p_3bet_action = 'C' ensures only callers (not folders) are included.
     Verified jaymacca13: SB=34.5%, MP=53.3%, EP=44.0%, CO=45.0%.
     """
     cur.execute("""
@@ -778,6 +779,7 @@ def sit_53(cur, player):
     JOIN player p ON p.id_player = chps.id_player
     WHERE p.player_name = %s
     AND chps.flg_p_3bet_def_opp = TRUE
+    AND chps.enum_p_3bet_action = 'C'
     AND chps.flg_f_has_position = FALSE
     """, (player,))
     row = cur.fetchone()
@@ -803,6 +805,7 @@ def sit_54(cur, player):
     Denominator: flg_f_cbet_def_opp = TRUE (player FACED cbet as defender).
     Numerator: flg_f_fold = TRUE.
     IP: flg_f_has_position = TRUE.
+    Filter: enum_p_3bet_action = 'C' ensures only callers (not folders) are included.
     """
     cur.execute("""
     SELECT
@@ -814,6 +817,7 @@ def sit_54(cur, player):
     JOIN player p ON p.id_player = chps.id_player
     WHERE p.player_name = %s
     AND chps.flg_p_3bet_def_opp = TRUE
+    AND chps.enum_p_3bet_action = 'C'
     AND chps.flg_f_has_position = TRUE
     """, (player,))
     row = cur.fetchone()
@@ -1375,15 +1379,16 @@ def sit_83(cur, player):
 
 def sit_84(cur, player):
     """Float by Texture (called cbet IP — float bet definition).
-    Denominator: flg_f_cbet_def_opp = TRUE AND flg_f_fold = FALSE AND flg_f_has_position = TRUE (called cbet IP).
-    Numerator: flg_f_bet = TRUE (bet on next street, i.e., float bet).
-    Previous version used flg_f_cbet as numerator (wrong — that's the cbettor's stat).
+    Denominator: called flop cbet IP AND saw turn (flg_f_cbet_def_opp=TRUE, flg_f_fold=FALSE,
+                 flg_f_has_position=TRUE, flg_t_saw=TRUE).
+    Numerator: flg_t_bet = TRUE (bet on TURN = float bet on next street).
+    Note: flg_f_bet was wrong — that's a flop bet, impossible after calling a flop cbet.
     """
     cur.execute("""
         SELECT
             chs.card_1, chs.card_2, chs.card_3,
             COUNT(*) as n,
-            SUM(CASE WHEN chps.flg_f_bet = TRUE THEN 1 ELSE 0 END) as floats
+            SUM(CASE WHEN chps.flg_t_bet = TRUE THEN 1 ELSE 0 END) as floats
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
         JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
@@ -1391,6 +1396,7 @@ def sit_84(cur, player):
           AND chps.flg_f_cbet_def_opp = TRUE
           AND chps.flg_f_fold = FALSE
           AND chps.flg_f_has_position = TRUE
+          AND chps.flg_t_saw = TRUE
         GROUP BY chs.card_1, chs.card_2, chs.card_3
         HAVING COUNT(*) >= 10
     """, (player,))
@@ -1421,8 +1427,10 @@ def sit_84(cur, player):
 
 def sit_87(cur, player):
     """
-    Probe Bet % by Street: OOP non-PFR who didn't face a flop CBet.
-    Filter: flg_f_cbet_opp = FALSE (not PFR) AND flg_f_has_position = FALSE (OOP).
+    Probe Bet % by Street: OOP non-PFR after PFR MISSED flop cbet.
+    Per knowledge base §6.3: probe = OOP non-PFR bets on turn/river after PFR checked flop.
+    Filter: flg_f_saw=TRUE (saw flop) AND flg_f_cbet_opp=FALSE (not PFR)
+            AND flg_f_has_position=FALSE (OOP) AND flg_f_cbet_def_opp=FALSE (PFR checked, no cbet faced).
     Turn probe: flg_t_bet = TRUE / flg_t_saw = TRUE.
     River probe: flg_r_bet = TRUE / flg_r_saw = TRUE.
     Split by seat position. n >= 15.
@@ -1437,8 +1445,10 @@ def sit_87(cur, player):
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
         WHERE p.player_name = %s
+          AND chps.flg_f_saw = TRUE
           AND chps.flg_f_cbet_opp = FALSE
           AND chps.flg_f_has_position = FALSE
+          AND chps.flg_f_cbet_def_opp = FALSE
         GROUP BY chps.position
         ORDER BY chps.position
     """, (player,))
@@ -2064,7 +2074,7 @@ def sit_107(cur, player):
          'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 3 AND chps.enum_p_3bet_action = \'F\'',
          'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 3',
          55.0, 1.2),
-        ('Fold to 3-Bet - EP',
+        ('Fold to 3-Bet - HJ',
          'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 2 AND chps.enum_p_3bet_action = \'F\'',
          'chps.flg_p_3bet_def_opp = TRUE AND chps.position = 2',
          55.0, 1.2),
@@ -2082,7 +2092,7 @@ def sit_107(cur, player):
          65.0, 1.0),
         ('Donk Lead Flop',
          'chps.flg_f_donk = TRUE',
-         'chps.flg_f_cbet_opp = TRUE AND chps.flg_p_3bet = FALSE AND chps.flg_f_has_position = FALSE',
+         'chps.flg_f_donk_opp = TRUE',
          20.0, 1.0),
     ]
 
@@ -3213,7 +3223,7 @@ def sit_60(cur, player):
                       AND chps.flg_f_has_position = FALSE THEN 1 ELSE 0 END) as fold_oop
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
-        JOIN cash_hand_summary chs ON chps.id_hand = chps.id_hand
+        JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
         WHERE p.player_name = %s
           AND chps.flg_p_3bet = FALSE
           AND chs.cnt_players_f = 2
@@ -3277,7 +3287,7 @@ def sit_61(cur, player):
                       AND chps.flg_f_has_position = FALSE THEN 1 ELSE 0 END) as fold_oop
         FROM cash_hand_player_statistics chps
         JOIN player p ON p.id_player = chps.id_player
-        JOIN cash_hand_summary chs ON chps.id_hand = chps.id_hand
+        JOIN cash_hand_summary chs ON chps.id_hand = chs.id_hand
         WHERE p.player_name = %s
           AND chps.flg_p_3bet = FALSE
           AND chs.cnt_players_f = 2

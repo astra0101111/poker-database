@@ -89,7 +89,9 @@ def decode_card(card_value: Optional[int]) -> Optional[str]:
 
 def classify_board_texture(card_1: Optional[int], card_2: Optional[int],
                          card_3: Optional[int]) -> Dict:
-    """Classify board texture from flop cards."""
+    """Classify board texture from flop cards.
+    Returns MONOTONE / PAIRED / RAINBOW / TWO-TONE (matches generate_full_report.py).
+    """
     # Handle pre-flop all-in (no flop)
     if card_1 is None or card_2 is None or card_3 is None:
         return {
@@ -112,7 +114,14 @@ def classify_board_texture(card_1: Optional[int], card_2: Optional[int],
     # Rainbow: all different suits
     is_rainbow = len(set(suits)) == 3
 
-    texture_type = 'MONOTONE' if is_monotone else 'PAIRED' if is_paired else 'DRY'
+    if is_monotone:
+        texture_type = 'MONOTONE'
+    elif is_paired:
+        texture_type = 'PAIRED'
+    elif is_rainbow:
+        texture_type = 'RAINBOW'
+    else:
+        texture_type = 'TWO-TONE'
 
     return {
         'type': texture_type,
