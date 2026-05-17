@@ -247,3 +247,13 @@ Direct query against information_schema.columns confirmed ALL previously unverif
 
 **Lesson:** Schema discovery in Phase 0 was incomplete. Always verify suspicious columns directly
 via `information_schema.columns` before assuming they don't exist.
+
+### BUG PATTERN: Wrong denominator for OOP defender stat (sit_96 BB)
+**Issue:** BB query used `flg_f_cbet_opp=TRUE` (PFR flag) — BB is almost never PFR in SRP, sample near-zero.
+**Why:** BB as OOP defender needs `flg_f_cbet_def_opp` for fold/XR, `flg_f_donk_opp` for donk.
+**How to apply:** Always match denominator to player role: PFR → `flg_f_cbet_opp`, Defender → `flg_f_cbet_def_opp`, Donker → `flg_f_donk_opp`.
+
+### BUG PATTERN: Using generic bet flag instead of dedicated PT4 float flag (sit_84)
+**Issue:** Used `flg_t_bet` as proxy for float bet. PT4 has dedicated `flg_t_float` / `flg_t_float_opp`.
+**Why:** Schema discovery was incomplete — `flg_t_float` and `flg_t_float_opp` were not in the initial discovery list.
+**How to apply:** Before using a proxy flag, verify if PT4 has a dedicated flag via `information_schema.columns`. Native flags are always more precise.
