@@ -148,3 +148,37 @@ SUM(CASE WHEN chps.flg_blind_def_opp AND chps.flg_p_3bet THEN 1 ELSE 0 END)
 - Fold to steal: SB (85.5%) >> BB (48.4%) - expected pattern
 - 3Bet rates consistent with population norms (6-14%)
 - 2026-04-15: Fixed sit_81 empty data - removed HAVING >=10 from _texture_agg in generate_full_report.py. Board textures had max 2 per combo, so threshold excluded all data.
+
+---
+
+## Technical Audit Fixes (2026-05-17)
+
+### BUG PATTERN: Self-JOIN (sit_60, sit_61)
+**Issue:** `JOIN cash_hand_summary chs ON chps.id_hand = chps.id_hand` — joins chps to itself, not to chs.
+**Why:** Copy-paste error. Silent bug — query runs but returns cartesian product garbage.
+**How to apply:** Always verify JOIN condition references the correct alias on both sides. When joining two tables, both sides of ON must reference different aliases.
+
+### BUG PATTERN: Wrong denominator in sit_107 Donk Lead
+**Issue:** Used `flg_f_cbet_opp = TRUE` (PFR's opportunity) as denominator for donk bet stat.
+**Why:** Donk bettor is the NON-PFR. Correct denominator is `flg_f_donk_opp = TRUE`.
+**How to apply:** For any stat, numerator and denominator must be from the SAME player perspective. flg_f_cbet_opp belongs to the PFR; flg_f_donk_opp belongs to the caller/donker.
+
+### BUG PATTERN: Wrong street for float bet (sit_84)
+**Issue:** Used `flg_f_bet` (flop bet) as numerator for float bet after calling flop cbet.
+**Why:** Calling a cbet and betting on the same street are mutually exclusive. Float bet by definition happens on the NEXT street (turn).
+**How to apply:** Float bet = called cbet on flop IP → bet on TURN. Numerator must be `flg_t_bet`, denominator must include `flg_t_saw = TRUE`.
+
+### BUG PATTERN: Incomplete probe bet filter (sit_87)
+**Issue:** Filter only checked OOP + non-PFR, but didn't verify PFR missed cbet.
+**Why:** Knowledge base §6.3: probe = OOP non-PFR bets AFTER PFR checked flop. Without `flg_f_cbet_def_opp = FALSE`, stat includes hands where PFR did cbet (and player called).
+**How to apply:** Always cross-reference knowledge base definition when implementing postflop classification stats.
+
+### BUG PATTERN: 3-bet stat includes preflop folders (sit_53, sit_54)
+**Issue:** `flg_p_3bet_def_opp = TRUE` includes everyone who faced a 3-bet, including those who folded preflop.
+**Why:** "3-Bet Caller" postflop stat must filter to only those who actually called: `enum_p_3bet_action = 'C'`.
+**How to apply:** Postflop stats filtered by preflop action must always specify the preflop action taken, not just the opportunity.
+
+### BUG PATTERN: Inconsistent texture classification between modules
+**Issue:** pt4_tools.py returned DRY; generate_full_report.py returned RAINBOW/TWO-TONE.
+**Why:** Two separate implementations diverged. pt4_tools.py was the older version.
+**How to apply:** Single source of truth for texture classification. If both files need it, one should import from the other. Until refactored, keep both in sync manually.
