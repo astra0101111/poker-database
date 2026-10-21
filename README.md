@@ -1,10 +1,10 @@
 # Poker Database — UAPI v3.8
 
-Autonomous poker analytics stack over a PokerTracker 4 PostgreSQL database. Generates per-player leak reports across 69 statistical situations, with full population scanning.
+Autonomous poker analytics stack over a  PostgreSQL database. Generates per-player leak reports across 69 statistical situations, with full population scanning.
 
 ## Stack
 
-- **Database**: PostgreSQL (PokerTracker 4 schema)
+- **Database**: PostgreSQL 
 - **Library**: `pt4_tools.py` — SQL helpers, card decoding, texture classification, sizing buckets
 - **Report engine**: `generate_full_report.py` — 69 `sit_N` functions covering preflop, postflop, sizing, and positional metrics
 - **Population scanner**: `population_scanner.py` — runs full reports across all players with ≥500 hands
@@ -32,10 +32,10 @@ pip install psycopg2-binary
 **Single player report:**
 
 ```bash
-python generate_full_report.py jaymacca13
+python generate_full_report.py xxx
 ```
 
-Saves to `reports/jaymacca13_FULL.md`. Returns a dict keyed by `sit_N` with `value`, `n`, `status`, and `details`.
+Saves to `reports/xxx_FULL.md`. Returns a dict keyed by `sit_N` with `value`, `n`, `status`, and `details`.
 
 **Population scan:**
 
@@ -63,7 +63,7 @@ Scans all players with ≥500 hands and writes a population summary.
 ## Architecture
 
 ```
-pt4_tools.py              # Core library — DB connection, card decode, texture/sizing helpers
+tools.py              # Core library — DB connection, card decode, texture/sizing helpers
 generate_full_report.py   # 69 sit_N functions → unified report per player
 population_scanner.py     # Batch runner over all players
 reports/                  # Generated Markdown reports (gitignored)
